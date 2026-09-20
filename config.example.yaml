@@ -1,0 +1,40 @@
+server:
+  host: 127.0.0.1
+  port: 3001
+  schedule: "0 * * * * *"
+
+github:
+  tokenEnv: GITHUB_TOKEN
+  maxPages: 10
+
+rules:
+  - name: workflow-failures
+    when: |
+      notification.reason == "ci_activity" and (
+        notification.title contains "run failed" or notification.title contains "Run failed"
+      )
+    actions:
+      - type: done
+
+  - name: release-subscriptions
+    when: notification.type == "Release" and notification.reason == "subscribed"
+    actions:
+      - type: done
+
+  - name: closed-or-merged
+    when: subject.merged == true or subject.state == "closed"
+    actions:
+      - type: done
+
+  - name: noisy-bots
+    when: |
+      subject.author == "renovate" or subject.author == "dependabot" or
+        subject.author == "coderabbitai" or subject.author == "vercel" or
+        subject.author == "cloudflare-workers-and-pages" or subject.author == "github-actions"
+    actions:
+      - type: done
+
+  - name: stale-review-requests
+    when: notification.reason == "review_requested" and subject.reviewPending == false
+    actions:
+      - type: done

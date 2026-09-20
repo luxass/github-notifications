@@ -1,0 +1,35 @@
+{
+  "name": "github-notifications",
+  "version": "0.1.0",
+  "private": true,
+  "description": "TypeScript service with JSON HTTP server and per-minute cron.",
+  "type": "module",
+  "scripts": {
+    "server": "node src/server.ts",
+    "build": "tsdown",
+    "format": "oxfmt --write .",
+    "format:check": "oxfmt --check .",
+    "lint": "oxlint .",
+    "test": "vitest run",
+    "test:vitest": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@effect/platform-node": "catalog:runtime",
+    "effect": "catalog:runtime",
+    "yaml": "catalog:runtime"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:dev",
+    "@oxlint/plugins": "catalog:dev",
+    "@tsdown/exe": "catalog:dev",
+    "@types/node": "catalog:dev",
+    "oxfmt": "catalog:dev",
+    "oxlint": "catalog:dev",
+    "oxlint-tsgolint": "catalog:dev",
+    "tsdown": "catalog:dev",
+    "typescript": "catalog:dev",
+    "vitest": "catalog:dev"
+  },
+  "packageManager": "pnpm@12.4.1"
+}
