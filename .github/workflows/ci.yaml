@@ -1,0 +1,22 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    types:
+      - opened
+      - synchronize
+
+permissions: {}
+
+jobs:
+  ci:
+    permissions:
+      contents: read
+    uses: luxass/shared-workflows/.github/workflows/reusable-ci.yaml@7be4a924607be148a2093d4651d920cfcc9a264f # v0.13.0
+    with:
+      node-version: "26"
+      fmt: true
+      fmt-script: "format:check"
