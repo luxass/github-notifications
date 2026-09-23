@@ -1,6 +1,6 @@
 import { Context, Duration, Effect, Layer } from "effect";
 
-import { executeRules, type CompiledRule, RuleActionExecutor } from "./dsl/compiler.ts";
+import { executeRulesLazily, type CompiledRule, RuleActionExecutor } from "./dsl/compiler.ts";
 import type { QueryEnvironment, Subject } from "./dsl/environment.ts";
 import { GitHubClient, type GitHubNotification } from "./github.ts";
 
@@ -50,9 +50,12 @@ export const NotificationPollerLive = (rules: ReadonlyArray<CompiledRule>) =>
               result.notifications,
               (notification) =>
                 Effect.gen(function* () {
-                  const matchedRules = yield* executeRules(
+                  const environment = toQueryEnvironment(notification, SUBJECT_DEFAULTS);
+
+                  const matchedRules = yield* executeRulesLazily(
                     rules,
-                    yield* toQueryEnvironment(client, notification),
+                    environment,
+                    () => loadSubjectEnvironment(client, notification),
                     executor,
                   );
 
@@ -89,53 +92,53 @@ export const NotificationPollerLive = (rules: ReadonlyArray<CompiledRule>) =>
     }),
   );
 
-function toQueryEnvironment(
+function toQueryEnvironment(notification: GitHubNotification, subject: Subject): QueryEnvironment {
+  const [owner = "unknown", name = "unknown"] = notification.repository.full_name.split("/", 2);
+
+  return {
+    notification: {
+      id: notification.id,
+      reason: notification.reason,
+      unread: notification.unread,
+      title: notification.subject.title,
+      type: notification.subject.type,
+      updatedAt: new Date(notification.updated_at),
+    },
+    repo: {
+      name,
+      owner,
+      fullName: notification.repository.full_name,
+      private: false,
+      stars: 0,
+    },
+    author: { login: subject.author, type: "unknown" },
+    ctx: { login: "unknown" },
+    subject,
+  };
+}
+
+function loadSubjectEnvironment(
   client: GitHubClient["Service"],
   notification: GitHubNotification,
 ): Effect.Effect<QueryEnvironment, Error> {
-  const [owner = "unknown", name = "unknown"] = notification.repository.full_name.split("/", 2);
+  const url = notification.subject.url;
 
-  return Effect.gen(function* () {
-    const url = notification.subject.url;
+  const supportedType =
+    notification.subject.type === "Issue" || notification.subject.type === "PullRequest";
 
-    const supportedType =
-      notification.subject.type === "Issue" || notification.subject.type === "PullRequest";
-
-    const fetched =
-      url === null || !supportedType
-        ? Effect.succeed(SUBJECT_DEFAULTS)
-        : client.getSubject(url).pipe(
-            Effect.map((details) => details ?? SUBJECT_DEFAULTS),
-            Effect.catch(() =>
-              Effect.logWarning(`Could not fetch subject for thread ${notification.id}`).pipe(
-                Effect.as(SUBJECT_DEFAULTS),
-              ),
+  const fetched =
+    url === null || !supportedType
+      ? Effect.succeed(SUBJECT_DEFAULTS)
+      : client.getSubject(url).pipe(
+          Effect.map((details) => details ?? SUBJECT_DEFAULTS),
+          Effect.catch(() =>
+            Effect.logWarning(`Could not fetch subject for thread ${notification.id}`).pipe(
+              Effect.as(SUBJECT_DEFAULTS),
             ),
-          );
+          ),
+        );
 
-    const subject: Subject = yield* fetched;
-
-    return {
-      notification: {
-        id: notification.id,
-        reason: notification.reason,
-        unread: notification.unread,
-        title: notification.subject.title,
-        type: notification.subject.type,
-        updatedAt: new Date(notification.updated_at),
-      },
-      repo: {
-        name,
-        owner,
-        fullName: notification.repository.full_name,
-        private: false,
-        stars: 0,
-      },
-      author: { login: subject.author, type: "unknown" },
-      ctx: { login: "unknown" },
-      subject,
-    };
-  });
+  return Effect.map(fetched, (subject) => toQueryEnvironment(notification, subject));
 }
 
 const SUBJECT_DEFAULTS: Subject = {

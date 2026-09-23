@@ -9,132 +9,225 @@ export type QueryPredicate = (
   environment: QueryEnvironment,
 ) => Effect.Effect<boolean, EvaluationError>;
 
+export type PartialQueryResult = boolean | "unknown";
+
+export type PartialQueryPredicate = (
+  environment: QueryEnvironment,
+) => Effect.Effect<PartialQueryResult, EvaluationError>;
+
 export type ValueReader = (
   environment: QueryEnvironment,
 ) => Effect.Effect<QueryValue, EvaluationError>;
 
-export const compileExpression = (expression: Expression): QueryPredicate =>
-  Match.value(expression).pipe(
-    Match.when({ type: "logical" }, (logical) => {
-      const left = compileExpression(logical.left);
-      const right = compileExpression(logical.right);
+type ExpressionEvaluator = (
+  environment: QueryEnvironment,
+  subjectAvailable: boolean,
+) => Effect.Effect<PartialQueryResult, EvaluationError>;
 
-      if (logical.operator === "and") {
-        return (environment: QueryEnvironment) =>
-          Effect.gen(function* () {
-            if (!(yield* left(environment))) {
+export const compileExpressionVariants = (expression: Expression) => {
+  const evaluate = compileExpressionInternal(expression);
+
+  const predicate: QueryPredicate = (environment) =>
+    Effect.flatMap(evaluate(environment, true), (result) =>
+      result === "unknown"
+        ? Effect.fail(new EvaluationError({ message: "Unexpected unresolved subject field" }))
+        : Effect.succeed(result),
+    );
+
+  const partialPredicate: PartialQueryPredicate = (environment) => evaluate(environment, false);
+
+  return { predicate, partialPredicate };
+};
+
+export const compileExpression = (expression: Expression): QueryPredicate =>
+  compileExpressionVariants(expression).predicate;
+
+export const compilePartialExpression = (expression: Expression): PartialQueryPredicate =>
+  compileExpressionVariants(expression).partialPredicate;
+
+const compileExpressionInternal = (expression: Expression): ExpressionEvaluator => {
+  switch (expression.type) {
+    case "logical": {
+      const left = compileExpressionInternal(expression.left);
+      const right = compileExpressionInternal(expression.right);
+
+      return (environment, subjectAvailable) =>
+        Effect.gen(function* () {
+          const leftResult = yield* left(environment, subjectAvailable);
+
+          if (expression.operator === "and") {
+            if (leftResult === false) {
               return false;
             }
 
-            return yield* right(environment);
-          });
-      }
+            const rightResult = yield* right(environment, subjectAvailable);
 
-      return (environment: QueryEnvironment) =>
-        Effect.gen(function* () {
-          if (yield* left(environment)) {
+            if (rightResult === false) {
+              return false;
+            }
+
+            return leftResult === true && rightResult === true ? true : "unknown";
+          }
+
+          if (leftResult === true) {
             return true;
           }
 
-          return yield* right(environment);
+          const rightResult = yield* right(environment, subjectAvailable);
+
+          if (rightResult === true) {
+            return true;
+          }
+
+          return leftResult === false && rightResult === false ? false : "unknown";
         });
-    }),
-    Match.when({ type: "unary" }, (unary) => {
-      const inner = compileExpression(unary.expression);
+    }
 
-      return (environment: QueryEnvironment) => Effect.map(inner(environment), (value) => !value);
-    }),
-    Match.when({ type: "comparison" }, (comparison) => {
-      const left = compileValue(comparison.left);
-      const right = compileValue(comparison.right);
+    case "unary": {
+      const inner = compileExpressionInternal(expression.expression);
 
-      if (comparison.operator === "==") {
-        return (environment: QueryEnvironment) =>
-          Effect.map(Effect.zip(left(environment), right(environment)), ([leftValue, rightValue]) =>
-            valuesEqual(leftValue, rightValue),
-          );
-      }
+      return (environment, subjectAvailable) =>
+        Effect.map(inner(environment, subjectAvailable), (result) =>
+          result === "unknown" ? "unknown" : !result,
+        );
+    }
 
-      if (comparison.operator === "!=") {
-        return (environment: QueryEnvironment) =>
-          Effect.map(
-            Effect.zip(left(environment), right(environment)),
-            ([leftValue, rightValue]) => !valuesEqual(leftValue, rightValue),
-          );
-      }
+    case "comparison": {
+      const predicate = compileComparison(expression);
+      const usesSubject = expressionUsesSubject(expression);
 
-      if (comparison.operator === "contains") {
-        return (environment: QueryEnvironment) =>
-          Effect.gen(function* () {
-            const leftValue = yield* left(environment);
-            const rightValue = yield* right(environment);
+      return (environment, subjectAvailable) =>
+        !subjectAvailable && usesSubject
+          ? Effect.succeed("unknown")
+          : Effect.map(predicate(environment), (result) => result);
+    }
 
-            if (Predicate.isString(leftValue) && Predicate.isString(rightValue)) {
-              return leftValue.includes(rightValue);
-            }
+    case "member": {
+      const predicate = compileBooleanMember(expression);
+      const usesSubject = expressionUsesSubject(expression);
 
-            return yield* Effect.fail(
-              new EvaluationError({ message: "Operator contains requires string operands" }),
-            );
-          });
-      }
+      return (environment, subjectAvailable) =>
+        !subjectAvailable && usesSubject
+          ? Effect.succeed("unknown")
+          : Effect.map(predicate(environment), (result) => result);
+    }
 
-      const operator = comparison.operator;
-
-      return (environment: QueryEnvironment) =>
-        Effect.gen(function* () {
-          const ordering = yield* compareValues(
-            yield* left(environment),
-            yield* right(environment),
-          );
-
-          if (operator === ">") {
-            return ordering > 0;
-          }
-
-          if (operator === ">=") {
-            return ordering >= 0;
-          }
-
-          if (operator === "<") {
-            return ordering < 0;
-          }
-
-          return ordering <= 0;
-        });
-    }),
-    Match.when({ type: "member" }, (member) => {
-      const key = member.path.join(".");
-      const entry = fieldDefinitions[key];
-
-      if (entry === undefined || entry.type !== "boolean") {
-        return () => Effect.fail(new EvaluationError({ message: `${key} is not a boolean field` }));
-      }
-
-      const read = entry.read;
-
-      return (environment: QueryEnvironment) =>
-        Effect.gen(function* () {
-          const value = read(environment);
-
-          if (Predicate.isBoolean(value)) {
-            return value;
-          }
-
-          return yield* Effect.fail(
-            new EvaluationError({ message: `${key} is not a boolean field` }),
-          );
-        });
-    }),
-    Match.when(
-      { type: "literal" },
-      () => () =>
+    case "literal":
+      return () =>
         Effect.fail(
           new EvaluationError({ message: "A literal cannot be evaluated directly as a condition" }),
-        ),
-    ),
-    Match.exhaustive,
-  );
+        );
+
+    default: {
+      const exhaustive: never = expression;
+
+      return exhaustive;
+    }
+  }
+};
+
+const expressionUsesSubject = (expression: Expression): boolean => {
+  switch (expression.type) {
+    case "logical":
+      return expressionUsesSubject(expression.left) || expressionUsesSubject(expression.right);
+    case "comparison":
+      return expressionUsesSubject(expression.left) || expressionUsesSubject(expression.right);
+    case "unary":
+      return expressionUsesSubject(expression.expression);
+    case "member":
+      return expression.path[0] === "subject" || expression.path[0] === "author";
+    case "literal":
+      return false;
+    default: {
+      const exhaustive: never = expression;
+
+      return exhaustive;
+    }
+  }
+};
+
+const compileComparison = (
+  comparison: Extract<Expression, { readonly type: "comparison" }>,
+): QueryPredicate => {
+  const left = compileValue(comparison.left);
+  const right = compileValue(comparison.right);
+
+  if (comparison.operator === "==") {
+    return (environment) =>
+      Effect.map(Effect.zip(left(environment), right(environment)), ([leftValue, rightValue]) =>
+        valuesEqual(leftValue, rightValue),
+      );
+  }
+
+  if (comparison.operator === "!=") {
+    return (environment) =>
+      Effect.map(
+        Effect.zip(left(environment), right(environment)),
+        ([leftValue, rightValue]) => !valuesEqual(leftValue, rightValue),
+      );
+  }
+
+  if (comparison.operator === "contains") {
+    return (environment) =>
+      Effect.gen(function* () {
+        const leftValue = yield* left(environment);
+        const rightValue = yield* right(environment);
+
+        if (Predicate.isString(leftValue) && Predicate.isString(rightValue)) {
+          return leftValue.includes(rightValue);
+        }
+
+        return yield* Effect.fail(
+          new EvaluationError({ message: "Operator contains requires string operands" }),
+        );
+      });
+  }
+
+  const operator = comparison.operator;
+
+  return (environment) =>
+    Effect.gen(function* () {
+      const ordering = yield* compareValues(yield* left(environment), yield* right(environment));
+
+      if (operator === ">") {
+        return ordering > 0;
+      }
+
+      if (operator === ">=") {
+        return ordering >= 0;
+      }
+
+      if (operator === "<") {
+        return ordering < 0;
+      }
+
+      return ordering <= 0;
+    });
+};
+
+const compileBooleanMember = (
+  member: Extract<Expression, { readonly type: "member" }>,
+): QueryPredicate => {
+  const key = member.path.join(".");
+  const entry = fieldDefinitions[key];
+
+  if (entry === undefined || entry.type !== "boolean") {
+    return () => Effect.fail(new EvaluationError({ message: `${key} is not a boolean field` }));
+  }
+
+  const read = entry.read;
+
+  return (environment) =>
+    Effect.gen(function* () {
+      const value = read(environment);
+
+      if (Predicate.isBoolean(value)) {
+        return value;
+      }
+
+      return yield* Effect.fail(new EvaluationError({ message: `${key} is not a boolean field` }));
+    });
+};
 
 export const compileValue = (expression: Expression): ValueReader =>
   Match.value(expression).pipe(

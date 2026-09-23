@@ -62,6 +62,74 @@ describe("NotificationPoller", () => {
     expect(actions).toEqual(["read"]);
   });
 
+  test("fetches a subject only when notification fields leave a rule undecided", async () => {
+    const subjectUrl = "https://api.github.com/repos/a/b/pulls/1";
+    const notifications = [
+      {
+        ...notification,
+        id: "irrelevant",
+        reason: "mention",
+        subject: { ...notification.subject, url: subjectUrl },
+      },
+      {
+        ...notification,
+        id: "candidate",
+        reason: "review_requested",
+        subject: { ...notification.subject, url: subjectUrl },
+      },
+    ];
+    const fetchedSubjects: string[] = [];
+    const actions: string[] = [];
+    const rules = await Effect.runPromise(
+      compileRules([
+        {
+          name: "stale-review",
+          when: 'notification.reason == "review_requested" and subject.reviewPending == false',
+          actions: [{ type: "done" }],
+        },
+      ]),
+    );
+    const layer = NotificationPollerLive(rules).pipe(
+      Layer.provide(
+        Layer.succeed(RuleActionExecutor, {
+          execute: (action) => {
+            actions.push(action.type);
+            return Effect.void;
+          },
+        }),
+      ),
+      Layer.provide(
+        Layer.succeed(GitHubClient, {
+          listNotifications: () =>
+            Effect.succeed({
+              kind: "updated" as const,
+              notifications,
+              pollAfterMs: 0,
+              truncated: false,
+            }),
+          markThreadRead: () => Effect.void,
+          markThreadDone: () => Effect.void,
+          deleteThreadSubscription: () => Effect.void,
+          getSubject: (url) =>
+            Effect.sync(() => {
+              fetchedSubjects.push(url);
+              return { state: "open", merged: false, author: "octocat", reviewPending: false };
+            }),
+        }),
+      ),
+    );
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const poller = yield* NotificationPoller;
+        yield* poller.poll("startup");
+      }).pipe(Effect.provide(layer)),
+    );
+
+    expect(fetchedSubjects).toEqual([subjectUrl]);
+    expect(actions).toEqual(["done"]);
+  });
+
   test("reuses Last-Modified for conditional notification polls", async () => {
     const requests: Array<{ readonly lastModified?: string }> = [];
     let pollCount = 0;

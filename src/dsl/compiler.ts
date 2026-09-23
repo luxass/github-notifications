@@ -4,7 +4,12 @@ import type { Action, Rule } from "../config.ts";
 import { GitHubClient } from "../github.ts";
 import type { QueryEnvironment } from "./environment.ts";
 import type { ParseError, TokenizeError, ValidationError } from "./errors.ts";
-import { compileExpression, type QueryPredicate } from "./evaluator.ts";
+import {
+  compileExpression,
+  compileExpressionVariants,
+  type PartialQueryPredicate,
+  type QueryPredicate,
+} from "./evaluator.ts";
 import { parse } from "./parser.ts";
 import { validate } from "./validator.ts";
 
@@ -20,6 +25,7 @@ export const compilePredicate = Effect.fn("dsl.compilePredicate")(function* (
 export interface CompiledRule {
   readonly name: string;
   readonly predicate: QueryPredicate;
+  readonly partialPredicate: PartialQueryPredicate;
   readonly actions: ReadonlyArray<Action>;
   readonly stop: boolean;
 }
@@ -69,14 +75,71 @@ export const compileRules = Effect.fn("dsl.compileRules")(function* (
 ) {
   return yield* Effect.forEach(definitions, (definition) =>
     Effect.gen(function* () {
+      const expression = yield* parse(definition.when);
+      yield* validate(expression);
+      const { predicate, partialPredicate } = compileExpressionVariants(expression);
+
       return {
         name: definition.name,
-        predicate: yield* compilePredicate(definition.when),
+        predicate,
+        partialPredicate,
         actions: definition.actions,
         stop: definition.stop ?? false,
       };
     }),
   );
+});
+
+export const executeRulesLazily = Effect.fn("dsl.executeRulesLazily")(function* (
+  rules: ReadonlyArray<CompiledRule>,
+  environment: QueryEnvironment,
+  resolveEnvironment: () => Effect.Effect<QueryEnvironment, Error>,
+  executor: RuleActionExecutor["Service"],
+) {
+  let detailedEnvironment: QueryEnvironment | undefined;
+
+  const run = (
+    remaining: ReadonlyArray<CompiledRule>,
+    matched: ReadonlyArray<string>,
+  ): Effect.Effect<ReadonlyArray<string>, Error> =>
+    Effect.gen(function* () {
+      const [rule, ...rest] = remaining;
+
+      if (rule === undefined) {
+        return matched;
+      }
+
+      let activeEnvironment = detailedEnvironment ?? environment;
+      let didMatch: boolean;
+
+      if (detailedEnvironment !== undefined) {
+        didMatch = yield* rule.predicate(activeEnvironment);
+      } else {
+        const partialResult = yield* rule.partialPredicate(environment);
+
+        if (partialResult === "unknown") {
+          detailedEnvironment = yield* resolveEnvironment();
+          activeEnvironment = detailedEnvironment;
+          didMatch = yield* rule.predicate(activeEnvironment);
+        } else {
+          didMatch = partialResult;
+        }
+      }
+
+      if (!didMatch) {
+        return yield* run(rest, matched);
+      }
+
+      yield* Effect.forEach(rule.actions, (action) => executor.execute(action, activeEnvironment));
+
+      if (rule.stop) {
+        return [...matched, rule.name];
+      }
+
+      return yield* run(rest, [...matched, rule.name]);
+    });
+
+  return yield* run(rules, []);
 });
 
 export const executeRules = Effect.fn("dsl.executeRules")(function* (
