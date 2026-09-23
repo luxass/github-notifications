@@ -62,6 +62,48 @@ describe("NotificationPoller", () => {
     expect(actions).toEqual(["read"]);
   });
 
+  test("reuses Last-Modified for conditional notification polls", async () => {
+    const requests: Array<{ readonly lastModified?: string }> = [];
+    let pollCount = 0;
+    const rules = await Effect.runPromise(compileRules([]));
+    const layer = NotificationPollerLive(rules).pipe(
+      Layer.provide(Layer.succeed(RuleActionExecutor, { execute: () => Effect.void })),
+      Layer.provide(
+        Layer.succeed(GitHubClient, {
+          listNotifications: (options) => {
+            requests.push(options ?? {});
+            pollCount += 1;
+            return Effect.succeed(
+              pollCount === 1
+                ? {
+                    kind: "updated" as const,
+                    notifications: [],
+                    pollAfterMs: 0,
+                    lastModified: "Sat, 19 Sep 2026 10:00:00 GMT",
+                    truncated: false,
+                  }
+                : { kind: "not-modified" as const, pollAfterMs: 0 },
+            );
+          },
+          markThreadRead: () => Effect.void,
+          markThreadDone: () => Effect.void,
+          deleteThreadSubscription: () => Effect.void,
+          getSubject: () => Effect.succeed(null),
+        }),
+      ),
+    );
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const poller = yield* NotificationPoller;
+        yield* poller.poll("startup");
+        yield* poller.poll("schedule");
+      }).pipe(Effect.provide(layer)),
+    );
+
+    expect(requests).toEqual([{}, { lastModified: "Sat, 19 Sep 2026 10:00:00 GMT" }]);
+  });
+
   test("does not execute actions for an unchanged poll", async () => {
     const actions: string[] = [];
     const rules = await Effect.runPromise(compileRules([]));

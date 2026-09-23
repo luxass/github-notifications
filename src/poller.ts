@@ -1,4 +1,4 @@
-import { Context, Effect, Layer } from "effect";
+import { Context, Duration, Effect, Layer } from "effect";
 
 import { executeRules, type CompiledRule, RuleActionExecutor } from "./dsl/compiler.ts";
 import type { QueryEnvironment, Subject } from "./dsl/environment.ts";
@@ -19,13 +19,26 @@ export const NotificationPollerLive = (rules: ReadonlyArray<CompiledRule>) =>
     Effect.gen(function* () {
       const client = yield* GitHubClient;
       const executor = yield* RuleActionExecutor;
+      let lastModified: string | undefined;
+      let nextPollAt = 0;
 
       return NotificationPoller.of({
         poll: (trigger) =>
           Effect.gen(function* () {
+            const waitMs = Math.max(0, nextPollAt - Date.now());
+
+            if (waitMs > 0) {
+              yield* Effect.sleep(Duration.millis(waitMs));
+            }
+
             yield* Effect.log(`Polling GitHub (${trigger})`);
             const startedAt = Date.now();
-            const result = yield* client.listNotifications();
+            const result = yield* client.listNotifications({ lastModified });
+            nextPollAt = Date.now() + result.pollAfterMs;
+
+            if (result.lastModified !== undefined) {
+              lastModified = result.lastModified;
+            }
 
             if (result.kind === "not-modified") {
               yield* Effect.log(`No new notifications (${trigger})`);
