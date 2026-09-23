@@ -1,43 +1,48 @@
 # github-notifications
 
-Automatically manage GitHub notifications with a small rule language.
+Manage GitHub notifications with configurable rules. The service is written in Go.
 
-The TypeScript implementation has been removed. This change does not add its replacement.
+## Requirements
+
+- Go 1.23 or later
+- A GitHub classic PAT with the `repo` scope
 
 ## Configuration
 
-Copy the example configuration and provide a GitHub token:
+Copy the example config and provide a token:
 
 ```sh
 cp config.example.yaml config.yaml
 export GITHUB_TOKEN="$(gh auth token)"
 ```
 
-The token needs the `repo` scope. Set `CONFIG_PATH` to load a different configuration file.
+The config sets the cron schedule, page limit, and notification rules. See [`config.example.yaml`](./config.example.yaml) for a complete example.
 
-See [`config.example.yaml`](./config.example.yaml) for the server settings and example rules.
+## Run
+
+```sh
+go run ./cmd/github-notifications
+```
+
+The service polls once at startup, then follows the configured schedule while respecting GitHub's `X-Poll-Interval`. It serves `/` and `/health` on the configured loopback address.
 
 ## Rules
 
-Rules contain a `name`, a `when` expression, and a list of `actions`.
-
-Supported operators:
+Each rule has a `name`, a `when` expression, and a list of `actions`. Supported operators are:
 
 ```text
 ==  !=  >  >=  <  <=  contains
 and  or  not  ( )
 ```
 
-Available fields include:
+Available fields include notification, repository, author, subject, and context fields. Issue and pull request details are fetched only when a rule cannot be decided from notification data alone, then cached with ETags.
 
-- `notification.id`, `reason`, `unread`, `title`, `type`, `updatedAt`
-- `repo.name`, `owner`, `fullName`, `private`, `stars`
-- `author.login`, `author.type`
-- `subject.state`, `merged`, `author`, `reviewPending`
-- `ctx.login`
+Actions are `read`, `done`, and `unsubscribe`. GitHub has no mark-unread endpoint, so `unread` actions are skipped with a warning.
 
-Actions are `read`, `done`, and `unsubscribe`. GitHub has no mark-unread endpoint.
+## Development
 
-## License
-
-[MIT](./LICENSE)
+```sh
+go test -race ./...
+go vet ./...
+go build ./cmd/github-notifications
+```

@@ -1,0 +1,39 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions: {}
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Build release binaries
+        run: |
+          mkdir -p dist
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -o dist/github-notifications-darwin-arm64 ./cmd/github-notifications
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o dist/github-notifications-linux-amd64 ./cmd/github-notifications
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -o dist/github-notifications-linux-arm64 ./cmd/github-notifications
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -o dist/github-notifications-windows-amd64.exe ./cmd/github-notifications
+          sha256sum dist/* > dist/SHA256SUMS
+
+      - name: Create GitHub release
+        run: gh release create "${GITHUB_REF_NAME}" --generate-notes dist/*
+        env:
+          GH_TOKEN: ${{ github.token }}
