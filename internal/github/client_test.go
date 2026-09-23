@@ -27,7 +27,9 @@ func TestListNotificationsUsesConditionalHeadersAndPollInterval(t *testing.T) {
 		writer.Header().Set("Last-Modified", "Sat, 19 Sep 2026 10:00:00 GMT")
 		writer.Header().Set("X-Poll-Interval", "120")
 		writer.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(writer, `[{"id":"1","unread":true,"reason":"mention","updated_at":"2026-09-19T10:00:00Z","repository":{"full_name":"a/b"},"subject":{"title":"hello","type":"Issue","url":null}}]`)
+		if _, err := fmt.Fprint(writer, `[{"id":"1","unread":true,"reason":"mention","updated_at":"2026-09-19T10:00:00Z","repository":{"full_name":"a/b"},"subject":{"title":"hello","type":"Issue","url":null}}]`); err != nil {
+			t.Error(err)
+		}
 	}))
 	defer server.Close()
 
@@ -57,7 +59,9 @@ func TestSubjectETagCache(t *testing.T) {
 			return
 		}
 		writer.Header().Set("ETag", `"v1"`)
-		fmt.Fprint(writer, `{"state":"closed","user":{"login":"dependabot[bot]"},"requested_reviewers":[{"login":"octocat"}]}`)
+		if _, err := fmt.Fprint(writer, `{"state":"closed","user":{"login":"dependabot[bot]"},"requested_reviewers":[{"login":"octocat"}]}`); err != nil {
+			t.Error(err)
+		}
 	}))
 	defer server.Close()
 

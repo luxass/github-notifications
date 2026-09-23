@@ -1,4 +1,4 @@
-name: Go
+name: Go CI
 
 on:
   push:
@@ -9,11 +9,17 @@ on:
       - opened
       - synchronize
       - reopened
+  workflow_dispatch:
 
 permissions: {}
 
+concurrency:
+  group: go-ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
+    name: Tests and vet
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -29,8 +35,77 @@ jobs:
           go-version-file: go.mod
           cache-dependency-path: go.sum
 
-      - name: Test Go implementation
-        run: go test ./...
+      - name: Run tests with race detection
+        run: go test -race -coverprofile=coverage.out ./...
 
-      - name: Vet Go implementation
+      - name: Show coverage
+        run: go tool cover -func=coverage.out
+
+      - name: Run go vet
         run: go vet ./...
+
+  lint:
+    name: Formatting and lint
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.27.1"
+          cache-dependency-path: go.sum
+
+      - name: Check gofmt
+        run: test -z "$(gofmt -l $(git ls-files '*.go'))"
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: v2.13.2
+          args: --timeout=5m
+
+  build:
+    name: Build ${{ matrix.goos }} / ${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: darwin
+            goarch: arm64
+            binary: github-notifications-darwin-arm64
+          - goos: linux
+            goarch: amd64
+            binary: github-notifications-linux-amd64
+          - goos: linux
+            goarch: arm64
+            binary: github-notifications-linux-arm64
+          - goos: windows
+            goarch: amd64
+            binary: github-notifications-windows-amd64.exe
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Build binary
+        env:
+          CGO_ENABLED: 0
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: go build -trimpath -o "$RUNNER_TEMP/${{ matrix.binary }}" ./cmd/github-notifications

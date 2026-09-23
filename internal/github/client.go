@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -112,7 +113,9 @@ func (client *Client) ListNotifications(ctx context.Context, lastModified string
 			result.LastModified = resp.Header.Get("Last-Modified")
 		}
 		if resp.StatusCode == http.StatusNotModified {
-			resp.Body.Close()
+			if err := resp.Body.Close(); err != nil {
+				return result, fmt.Errorf("close GitHub response body: %w", err)
+			}
 			if page != 1 {
 				return result, fmt.Errorf("GitHub returned 304 for paginated notifications")
 			}
@@ -120,16 +123,24 @@ func (client *Client) ListNotifications(ctx context.Context, lastModified string
 			return result, nil
 		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			err := responseError(resp, endpoint.String())
-			resp.Body.Close()
-			return result, err
+			requestErr := responseError(resp, endpoint.String())
+			if closeErr := resp.Body.Close(); closeErr != nil {
+				return result, errors.Join(requestErr, fmt.Errorf("close GitHub response body: %w", closeErr))
+			}
+			return result, requestErr
 		}
 
 		var notifications []Notification
 		decodeErr := json.NewDecoder(resp.Body).Decode(&notifications)
-		resp.Body.Close()
+		closeErr := resp.Body.Close()
 		if decodeErr != nil {
-			return result, fmt.Errorf("decode GitHub notifications: %w", decodeErr)
+			decodeErr = fmt.Errorf("decode GitHub notifications: %w", decodeErr)
+		}
+		if closeErr != nil {
+			decodeErr = errors.Join(decodeErr, fmt.Errorf("close GitHub response body: %w", closeErr))
+		}
+		if decodeErr != nil {
+			return result, decodeErr
 		}
 		result.Notifications = append(result.Notifications, notifications...)
 		if len(notifications) < perPage {
@@ -159,7 +170,9 @@ func (client *Client) GetSubject(ctx context.Context, subjectURL string) (*Subje
 	if err != nil {
 		return nil, fmt.Errorf("GitHub GET %s: %w", subjectURL, err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode == http.StatusNotModified && hasCache {
 		details := cached.details
@@ -230,7 +243,9 @@ func (client *Client) mutateThread(ctx context.Context, method, path string, exp
 	if err != nil {
 		return fmt.Errorf("GitHub %s %s: %w", method, endpoint, err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 	if resp.StatusCode == expected {
 		return nil
 	}

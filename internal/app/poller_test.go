@@ -20,7 +20,9 @@ func TestLazySubjectFetching(t *testing.T) {
 		switch request.URL.Path {
 		case subjectPath:
 			subjectFetches++
-			fmt.Fprint(writer, `{"state":"open","user":{"login":"octocat"},"requested_reviewers":[]}`)
+			if _, err := fmt.Fprint(writer, `{"state":"open","user":{"login":"octocat"},"requested_reviewers":[]}`); err != nil {
+				t.Error(err)
+			}
 		case "/notifications/threads/candidate":
 			doneMutations++
 			writer.WriteHeader(http.StatusNoContent)
