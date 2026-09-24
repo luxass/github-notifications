@@ -7,7 +7,7 @@ import (
 )
 
 func TestParseValidateAndEvaluate(t *testing.T) {
-	expression, err := Parse(`notification.reason == "review_requested" and (subject.reviewPending == false or repo.stars >= 2)`)
+	expression, err := Parse(`notification.reason == "review_requested" and (subject.reviewPending == false or notification.unread == true)`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -16,8 +16,7 @@ func TestParseValidateAndEvaluate(t *testing.T) {
 	}
 
 	environment := Environment{
-		Notification: NotificationFields{Reason: "mention", UpdatedAt: time.Date(2026, 9, 19, 10, 0, 0, 0, time.UTC)},
-		Repo:         RepositoryFields{Stars: 4},
+		Notification: NotificationFields{Reason: "mention", Unread: false, UpdatedAt: time.Date(2026, 9, 19, 10, 0, 0, 0, time.UTC)},
 	}
 	result, err := Evaluate(expression, environment, false)
 	if err != nil {
@@ -28,6 +27,7 @@ func TestParseValidateAndEvaluate(t *testing.T) {
 	}
 
 	environment.Notification.Reason = "review_requested"
+	environment.Notification.Unread = true
 	result, err = Evaluate(expression, environment, false)
 	if err != nil {
 		t.Fatal(err)
@@ -36,7 +36,7 @@ func TestParseValidateAndEvaluate(t *testing.T) {
 		t.Fatalf("true notification-only branch should not need subject data, got %v", result)
 	}
 
-	environment.Repo.Stars = 0
+	environment.Notification.Unread = false
 	result, err = Evaluate(expression, environment, false)
 	if err != nil {
 		t.Fatal(err)
@@ -56,7 +56,7 @@ func TestParseValidateAndEvaluate(t *testing.T) {
 }
 
 func TestOperatorPrecedenceAndNot(t *testing.T) {
-	expression, err := Parse(`not notification.unread or repo.stars > 10 and repo.private == false`)
+	expression, err := Parse(`not notification.unread or notification.reason == "mention" and repo.private == false`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,8 +64,8 @@ func TestOperatorPrecedenceAndNot(t *testing.T) {
 		t.Fatal(err)
 	}
 	result, err := Evaluate(expression, Environment{
-		Notification: NotificationFields{Unread: true},
-		Repo:         RepositoryFields{Stars: 20, Private: false},
+		Notification: NotificationFields{Reason: "mention", Unread: false},
+		Repo:         RepositoryFields{Private: true},
 	}, true)
 	if err != nil {
 		t.Fatal(err)
@@ -79,7 +79,8 @@ func TestValidationRejectsUnknownAndIllTypedExpressions(t *testing.T) {
 	for _, source := range []string{
 		`banana.reason == "mention"`,
 		`notification.title`,
-		`repo.stars contains "4"`,
+		`repo.stars == 4`,
+		`ctx.login == "octocat"`,
 		`"mention" == notification.reason`,
 		`notification.updatedAt > "not-a-date"`,
 	} {

@@ -366,8 +366,8 @@ var fieldTypes = map[string]valueType{
 	"notification.id": typeString, "notification.reason": typeString, "notification.unread": typeBoolean,
 	"notification.title": typeString, "notification.type": typeString, "notification.updatedAt": typeDate,
 	"repo.name": typeString, "repo.owner": typeString, "repo.fullName": typeString,
-	"repo.private": typeBoolean, "repo.stars": typeNumber,
-	"author.login": typeString, "author.type": typeString, "ctx.login": typeString,
+	"repo.private": typeBoolean,
+	"author.login": typeString, "author.type": typeString,
 	"subject.state": typeString, "subject.merged": typeBoolean, "subject.author": typeString,
 	"subject.reviewPending": typeBoolean,
 }

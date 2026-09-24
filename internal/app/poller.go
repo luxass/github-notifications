@@ -100,9 +100,6 @@ func (poller *Poller) Poll(ctx context.Context, trigger string) (time.Duration, 
 	poller.logger.Info("Polling GitHub", "trigger", trigger)
 	startedAt := time.Now()
 	result, err := poller.client.ListNotifications(ctx, poller.lastModified, poller.maxPages)
-	if result.LastModified != "" {
-		poller.lastModified = result.LastModified
-	}
 	if err != nil {
 		return result.PollAfter, err
 	}
@@ -123,6 +120,9 @@ func (poller *Poller) Poll(ctx context.Context, trigger string) (time.Duration, 
 		}
 		matchedRules += matched
 	}
+	if !result.Truncated && result.LastModified != "" {
+		poller.lastModified = result.LastModified
+	}
 	poller.logger.Info("Poll complete",
 		"trigger", trigger,
 		"notifications", len(result.Notifications),
@@ -137,6 +137,7 @@ func (poller *Poller) Poll(ctx context.Context, trigger string) (time.Duration, 
 func (poller *Poller) processNotification(ctx context.Context, notification github.Notification) (int, error) {
 	environment := baseEnvironment(notification)
 	subjectLoaded := false
+	subjectAttempted := false
 	matched := 0
 
 	for _, rule := range poller.rules {
@@ -144,14 +145,14 @@ func (poller *Poller) processNotification(ctx context.Context, notification gith
 		if err != nil {
 			return matched, fmt.Errorf("evaluate rule %q for thread %s: %w", rule.name, notification.ID, err)
 		}
-		if result == dsl.Unknown {
-			if !subjectLoaded {
-				environment = poller.loadSubject(ctx, notification)
-				subjectLoaded = true
-			}
-			result, err = dsl.Evaluate(rule.expr, environment, true)
-			if err != nil {
-				return matched, fmt.Errorf("evaluate rule %q for thread %s: %w", rule.name, notification.ID, err)
+		if result == dsl.Unknown && !subjectAttempted {
+			environment, subjectLoaded = poller.loadSubject(ctx, notification)
+			subjectAttempted = true
+			if subjectLoaded {
+				result, err = dsl.Evaluate(rule.expr, environment, true)
+				if err != nil {
+					return matched, fmt.Errorf("evaluate rule %q for thread %s: %w", rule.name, notification.ID, err)
+				}
 			}
 		}
 		if result != dsl.True {
@@ -172,21 +173,23 @@ func (poller *Poller) processNotification(ctx context.Context, notification gith
 	return matched, nil
 }
 
-func (poller *Poller) loadSubject(ctx context.Context, notification github.Notification) dsl.Environment {
+func (poller *Poller) loadSubject(ctx context.Context, notification github.Notification) (dsl.Environment, bool) {
+	environment := baseEnvironment(notification)
 	if notification.Subject.URL == nil || (notification.Subject.Type != "Issue" && notification.Subject.Type != "PullRequest") {
-		return withSubject(baseEnvironment(notification), defaultSubject())
+		return environment, false
 	}
 	details, err := poller.client.GetSubject(ctx, *notification.Subject.URL)
 	if err != nil {
 		poller.logger.Warn("Could not fetch notification subject", "thread", notification.ID, "error", err)
-		return withSubject(baseEnvironment(notification), defaultSubject())
+		return environment, false
 	}
 	if details == nil {
-		return withSubject(baseEnvironment(notification), defaultSubject())
+		return environment, false
 	}
-	return withSubject(baseEnvironment(notification), dsl.SubjectFields{
-		State: details.State, Merged: details.Merged, Author: details.Author, ReviewPending: details.ReviewPending,
-	})
+	return withSubject(environment, dsl.SubjectFields{
+		State: details.State, Merged: details.Merged, Author: details.Author,
+		AuthorType: details.AuthorType, ReviewPending: details.ReviewPending,
+	}), true
 }
 
 func baseEnvironment(notification github.Notification) dsl.Environment {
@@ -200,9 +203,8 @@ func baseEnvironment(notification github.Notification) dsl.Environment {
 			ID: notification.ID, Reason: notification.Reason, Unread: notification.Unread,
 			Title: notification.Subject.Title, Type: notification.Subject.Type, UpdatedAt: notification.UpdatedAt,
 		},
-		Repo:    dsl.RepositoryFields{Name: name, Owner: owner, FullName: notification.Repository.FullName},
+		Repo:    dsl.RepositoryFields{Name: name, Owner: owner, FullName: notification.Repository.FullName, Private: notification.Repository.Private},
 		Author:  dsl.AuthorFields{Login: "unknown", Type: "unknown"},
-		Context: dsl.ContextFields{Login: "unknown"},
 		Subject: defaultSubject(),
 	}
 }
@@ -210,6 +212,7 @@ func baseEnvironment(notification github.Notification) dsl.Environment {
 func withSubject(environment dsl.Environment, subject dsl.SubjectFields) dsl.Environment {
 	environment.Subject = subject
 	environment.Author.Login = subject.Author
+	environment.Author.Type = subject.AuthorType
 	return environment
 }
 

@@ -26,6 +26,7 @@ type Notification struct {
 	UpdatedAt  time.Time `json:"updated_at"`
 	Repository struct {
 		FullName string `json:"full_name"`
+		Private  bool   `json:"private"`
 	} `json:"repository"`
 	Subject struct {
 		Title string  `json:"title"`
@@ -38,6 +39,7 @@ type SubjectDetails struct {
 	State         string
 	Merged        bool
 	Author        string
+	AuthorType    string
 	ReviewPending bool
 }
 
@@ -190,6 +192,7 @@ func (client *Client) GetSubject(ctx context.Context, subjectURL string) (*Subje
 		Merged bool   `json:"merged"`
 		User   *struct {
 			Login string `json:"login"`
+			Type  string `json:"type"`
 		} `json:"user"`
 		RequestedReviewers []struct {
 			Login string `json:"login"`
@@ -201,14 +204,20 @@ func (client *Client) GetSubject(ctx context.Context, subjectURL string) (*Subje
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
 		return nil, fmt.Errorf("decode GitHub subject: %w", err)
 	}
-	author := "unknown"
-	if payload.User != nil && payload.User.Login != "" {
-		author = strings.TrimSuffix(payload.User.Login, "[bot]")
+	author, authorType := "unknown", "unknown"
+	if payload.User != nil {
+		if payload.User.Login != "" {
+			author = payload.User.Login
+		}
+		if payload.User.Type != "" {
+			authorType = payload.User.Type
+		}
 	}
 	details := SubjectDetails{
 		State:         payload.State,
 		Merged:        payload.Merged,
 		Author:        author,
+		AuthorType:    authorType,
 		ReviewPending: len(payload.RequestedReviewers)+len(payload.RequestedTeams) > 0,
 	}
 	if etag := resp.Header.Get("ETag"); etag != "" {

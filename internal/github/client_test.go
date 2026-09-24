@@ -27,7 +27,7 @@ func TestListNotificationsUsesConditionalHeadersAndPollInterval(t *testing.T) {
 		writer.Header().Set("Last-Modified", "Sat, 19 Sep 2026 10:00:00 GMT")
 		writer.Header().Set("X-Poll-Interval", "120")
 		writer.Header().Set("Content-Type", "application/json")
-		if _, err := fmt.Fprint(writer, `[{"id":"1","unread":true,"reason":"mention","updated_at":"2026-09-19T10:00:00Z","repository":{"full_name":"a/b"},"subject":{"title":"hello","type":"Issue","url":null}}]`); err != nil {
+		if _, err := fmt.Fprint(writer, `[{"id":"1","unread":true,"reason":"mention","updated_at":"2026-09-19T10:00:00Z","repository":{"full_name":"a/b","private":true},"subject":{"title":"hello","type":"Issue","url":null}}]`); err != nil {
 			t.Error(err)
 		}
 	}))
@@ -40,6 +40,9 @@ func TestListNotificationsUsesConditionalHeadersAndPollInterval(t *testing.T) {
 	}
 	if first.NotModified || len(first.Notifications) != 1 || first.LastModified == "" || first.PollAfter.Seconds() != 125 {
 		t.Fatalf("unexpected first result: %#v", first)
+	}
+	if !first.Notifications[0].Repository.Private {
+		t.Fatal("repository private field was not decoded")
 	}
 	second, err := client.ListNotifications(context.Background(), first.LastModified, 5)
 	if err != nil {
@@ -59,7 +62,7 @@ func TestSubjectETagCache(t *testing.T) {
 			return
 		}
 		writer.Header().Set("ETag", `"v1"`)
-		if _, err := fmt.Fprint(writer, `{"state":"closed","user":{"login":"dependabot[bot]"},"requested_reviewers":[{"login":"octocat"}]}`); err != nil {
+		if _, err := fmt.Fprint(writer, `{"state":"closed","user":{"login":"dependabot[bot]","type":"Bot"},"requested_reviewers":[{"login":"octocat"}]}`); err != nil {
 			t.Error(err)
 		}
 	}))
@@ -78,7 +81,7 @@ func TestSubjectETagCache(t *testing.T) {
 	if requests != 2 || first == nil || second == nil || *first != *second {
 		t.Fatalf("unexpected subject cache result: requests=%d first=%#v second=%#v", requests, first, second)
 	}
-	if first.Author != "dependabot" || first.State != "closed" || !first.ReviewPending {
+	if first.Author != "dependabot[bot]" || first.AuthorType != "Bot" || first.State != "closed" || !first.ReviewPending {
 		t.Fatalf("unexpected subject details: %#v", first)
 	}
 }

@@ -18,7 +18,6 @@ type Environment struct {
 	Notification NotificationFields
 	Repo         RepositoryFields
 	Author       AuthorFields
-	Context      ContextFields
 	Subject      SubjectFields
 }
 
@@ -36,7 +35,6 @@ type RepositoryFields struct {
 	Owner    string
 	FullName string
 	Private  bool
-	Stars    float64
 }
 
 type AuthorFields struct {
@@ -44,12 +42,11 @@ type AuthorFields struct {
 	Type  string
 }
 
-type ContextFields struct{ Login string }
-
 type SubjectFields struct {
 	State         string
 	Merged        bool
 	Author        string
+	AuthorType    string
 	ReviewPending bool
 }
 
@@ -180,14 +177,10 @@ func readMember(member Member, environment Environment, subjectAvailable bool) (
 		return environment.Repo.FullName, false, nil
 	case "repo.private":
 		return environment.Repo.Private, false, nil
-	case "repo.stars":
-		return environment.Repo.Stars, false, nil
 	case "author.login":
 		return environment.Author.Login, false, nil
 	case "author.type":
 		return environment.Author.Type, false, nil
-	case "ctx.login":
-		return environment.Context.Login, false, nil
 	case "subject.state":
 		return environment.Subject.State, false, nil
 	case "subject.merged":
