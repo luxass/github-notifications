@@ -1,101 +1,48 @@
-# 🔔 github-notifications
+# github-notifications
 
-Automatically manage GitHub notifications with a small rule language.
+Manage GitHub notifications with configurable rules. The service is written in Go.
 
-Built with [Effect](https://effect.website/), TypeScript, and Node.js.
+## Requirements
 
-## 📦 Installation
+- Go 1.23 or later
+- A GitHub classic PAT with the `repo` scope
 
-```sh
-pnpm install
-```
+## Configuration
 
-## ⚙️ Configuration
-
-Copy the example configuration and provide a GitHub token:
+Copy the example config and provide a token:
 
 ```sh
 cp config.example.yaml config.yaml
 export GITHUB_TOKEN="$(gh auth token)"
 ```
 
-The token needs the `repo` scope. Set `CONFIG_PATH` to load a different
-configuration file.
+The config sets the cron schedule, page limit, and notification rules. See [`config.example.yaml`](./config.example.yaml) for a complete example.
 
-```yaml
-server:
-  host: 127.0.0.1
-  port: 3001
-  schedule: "0 * * * * *"
-
-github:
-  tokenEnv: GITHUB_TOKEN
-  maxPages: 10
-
-rules:
-  - name: workflow-failures
-    when: notification.reason == "ci_activity" and notification.title contains "Run failed"
-    actions:
-      - type: done
-```
-
-See [`config.example.yaml`](./config.example.yaml) for more rules.
-
-## 🚀 Usage
+## Run
 
 ```sh
-pnpm server
+go run ./cmd/github-notifications
 ```
 
-The service polls once at startup and then follows the configured schedule.
+The service polls once at startup, then follows the configured schedule while respecting GitHub's `X-Poll-Interval`. It serves `/` and `/health` on the configured loopback address.
 
-```sh
-curl http://127.0.0.1:3001/
-curl http://127.0.0.1:3001/health
-```
+## Rules
 
-## 📚 Rules
-
-Rules contain a `name`, a `when` expression, and a list of `actions`.
-
-Supported operators:
+Each rule has a `name`, a `when` expression, and a list of `actions`. Supported operators are:
 
 ```text
 ==  !=  >  >=  <  <=  contains
 and  or  not  ( )
 ```
 
-Available fields include:
+Available fields include notification, repository, author, subject, and context fields. Issue and pull request details are fetched only when a rule cannot be decided from notification data alone, then cached with ETags.
 
-- `notification.id`, `reason`, `unread`, `title`, `type`, `updatedAt`
-- `repo.name`, `owner`, `fullName`, `private`, `stars`
-- `author.login`, `author.type`
-- `subject.state`, `merged`, `author`, `reviewPending`
-- `ctx.login`
+Actions are `read`, `done`, and `unsubscribe`. GitHub has no mark-unread endpoint, so `unread` actions are skipped with a warning.
 
-Issue and pull request subjects are fetched when needed and cached with ETags.
-
-### Actions
-
-- `read` — mark a thread as read
-- `done` — delete a thread
-- `unsubscribe` — unsubscribe from a thread
-
-GitHub has no mark-unread endpoint, so `unread` is not supported.
-
-## 🛠️ Development
+## Development
 
 ```sh
-pnpm test
-pnpm typecheck
-pnpm lint
-pnpm format
-pnpm build
+go test -race ./...
+go vet ./...
+go build ./cmd/github-notifications
 ```
-
-`pnpm build` creates a Node bundle and standalone executables for macOS arm64,
-Linux x64, and Windows x64.
-
-## 📄 License
-
-Published under the [MIT License](./LICENSE).

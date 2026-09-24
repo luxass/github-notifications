@@ -28,9 +28,9 @@ rules:
 
   - name: noisy-bots
     when: |
-      subject.author == "renovate" or subject.author == "dependabot" or
-        subject.author == "coderabbitai" or subject.author == "vercel" or
-        subject.author == "cloudflare-workers-and-pages" or subject.author == "github-actions"
+      subject.author == "renovate[bot]" or subject.author == "dependabot[bot]" or
+        subject.author == "coderabbitai[bot]" or subject.author == "vercel[bot]" or
+        subject.author == "cloudflare-workers-and-pages[bot]" or subject.author == "github-actions[bot]"
     actions:
       - type: done
 
